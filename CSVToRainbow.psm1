@@ -1,24 +1,31 @@
 <#
-===============================================================================
- CSVToRainbow.psm1
-===============================================================================
- Module : CSVToRainbow
- Purpose: Turn one or more CSV files into rainbow-colored, scrollable HTML
-          tables and email them — with a plain-text fallback for clients that
-          don't render HTML.
+.SYNOPSIS
+    Module: send CSV files as rainbow-colored, scrollable HTML tables in email.
 
- Public surface:
-   Send-RainbowCsv   Main entry point. See its comment-based help below.
+.DESCRIPTION
+    Converts one or more CSV files into styled HTML tables and emails them, with
+    a plain-text fallback for clients that don't render HTML. Mail is sent via
+    MailKit/MimeKit (auto-installed from NuGet if missing) rather than the
+    deprecated Send-MailMessage cmdlet.
 
- Mail transport:
-   Uses MailKit/MimeKit (auto-installed from NuGet if not already present)
-   rather than the deprecated Send-MailMessage cmdlet.
+    Exported command:
+      Send-RainbowCsv   Main entry point. See its comment-based help (Get-Help).
 
- Layout:
-   - Private Functions : helpers — assembly loading, SMTP send, HTML/text
-                         rendering, title cleanup. Not exported.
-   - Public Functions  : Send-RainbowCsv, the only exported command.
-===============================================================================
+    File layout:
+      Private Functions - helpers: assembly loading, SMTP send, HTML/text
+                          rendering, title cleanup. Not exported.
+      Public Functions  - Send-RainbowCsv, the only exported command.
+
+.NOTES
+    Version:    1.0.0
+    Repo:       https://github.com/dcazman/CSVToRainbow
+    Requires:   PowerShell 5.1+. Internet access on first run (to install
+                MailKit/MimeKit from NuGet if not already present).
+
+    *Created by Dan Casmas*
+
+.LINK
+    https://github.com/dcazman/CSVToRainbow
 #>
 
 #region Private Functions

@@ -94,6 +94,28 @@ Send-RainbowCsv `
     -SmtpServer "mail.company.com"
 ```
 
+### Authenticated SMTP
+
+Pass a `PSCredential` to authenticate. Most authenticated servers use port
+587 (STARTTLS) or 465, so set `-SmtpPort` accordingly — TLS is negotiated
+automatically. Omit `-Credential` to send without authentication (e.g. an open
+internal relay on port 25).
+
+```powershell
+$cred = Get-Credential   # prompts securely for username + password
+
+Send-RainbowCsv `
+    -ReportPath "C:\Logs\export.csv" `
+    -EmailTo "ops@company.com" `
+    -From "noreply@company.com" `
+    -SmtpServer "smtp.office365.com" `
+    -SmtpPort 587 `
+    -Credential $cred
+```
+
+> **Note:** Office 365 and Gmail have largely disabled basic SMTP auth. You'll
+> typically need an app password or a mailbox specifically enabled for SMTP AUTH.
+
 ---
 
 ## Parameters
