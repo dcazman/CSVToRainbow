@@ -12,7 +12,7 @@ latest released version.
 
 ## Security Considerations
 
-- **SMTP certificate validation.** `Send-RainbowCsv` accepts any server
+- **SMTP certificate validation.** `CSVToRainbow` accepts any server
   certificate (`ServerCertificateValidationCallback = { $true }`) to ease use
   with internal or self-signed relays. This means TLS connections are *not*
   validated against a trusted CA. Only point the module at SMTP servers you

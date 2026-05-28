@@ -46,7 +46,7 @@ $env:USERPROFILE\Documents\WindowsPowerShell\Modules\CSVToRainbow\
 ### Single file
 
 ```powershell
-Send-RainbowCsv `
+CSVToRainbow `
     -ReportPath "C:\Logs\export.csv" `
     -EmailTo "ops@company.com" `
     -From "noreply@company.com" `
@@ -56,7 +56,7 @@ Send-RainbowCsv `
 ### Multiple files
 
 ```powershell
-Send-RainbowCsv `
+CSVToRainbow `
     -ReportPath "C:\Logs\users.csv","C:\Logs\groups.csv" `
     -Title "Weekly Audit" `
     -EmailTo "ops@company.com" `
@@ -67,7 +67,7 @@ Send-RainbowCsv `
 ### Pipeline from Get-ChildItem
 
 ```powershell
-Get-ChildItem C:\Logs\*.csv | Send-RainbowCsv `
+Get-ChildItem C:\Logs\*.csv | CSVToRainbow `
     -EmailTo "ops@company.com" `
     -From "noreply@company.com" `
     -SmtpServer "mail.company.com"
@@ -76,7 +76,7 @@ Get-ChildItem C:\Logs\*.csv | Send-RainbowCsv `
 ### Inline only — no attachments
 
 ```powershell
-Get-ChildItem C:\Logs\*.csv | Send-RainbowCsv `
+Get-ChildItem C:\Logs\*.csv | CSVToRainbow `
     -EmailTo "ops@company.com" `
     -From "noreply@company.com" `
     -SmtpServer "mail.company.com" `
@@ -86,7 +86,7 @@ Get-ChildItem C:\Logs\*.csv | Send-RainbowCsv `
 ### Completion ping — no CSV
 
 ```powershell
-Send-RainbowCsv `
+CSVToRainbow `
     -NoReport `
     -Title "Nightly Job Complete" `
     -EmailTo "ops@company.com" `
@@ -104,7 +104,7 @@ internal relay on port 25).
 ```powershell
 $cred = Get-Credential   # prompts securely for username + password
 
-Send-RainbowCsv `
+CSVToRainbow `
     -ReportPath "C:\Logs\export.csv" `
     -EmailTo "ops@company.com" `
     -From "noreply@company.com" `

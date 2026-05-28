@@ -9,12 +9,12 @@
     deprecated Send-MailMessage cmdlet.
 
     Exported command:
-      Send-RainbowCsv   Main entry point. See its comment-based help (Get-Help).
+      CSVToRainbow   Main entry point. See its comment-based help (Get-Help).
 
     File layout:
       Private Functions - helpers: assembly loading, SMTP send, HTML/text
                           rendering, title cleanup. Not exported.
-      Public Functions  - Send-RainbowCsv, the only exported command.
+      Public Functions  - CSVToRainbow, the only exported command.
 
 .NOTES
     Version:    1.0.0
@@ -278,7 +278,7 @@ function Build-PlainEmailBody {
 
 #region Public Functions
 
-function Send-RainbowCsv {
+function CSVToRainbow {
 <#
 .SYNOPSIS
     Sends CSV files as rainbow-colored, scrollable HTML tables in an email.
@@ -318,13 +318,13 @@ function Send-RainbowCsv {
     Optional PSCredential for SMTP authentication.
 
 .EXAMPLE
-    Send-RainbowCsv -ReportPath "C:\Logs\export.csv" -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com"
+    CSVToRainbow -ReportPath "C:\Logs\export.csv" -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com"
 
 .EXAMPLE
-    Get-ChildItem C:\Logs\*.csv | Send-RainbowCsv -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com" -NoAttach
+    Get-ChildItem C:\Logs\*.csv | CSVToRainbow -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com" -NoAttach
 
 .EXAMPLE
-    Send-RainbowCsv -NoReport -Title "Job Complete" -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com"
+    CSVToRainbow -NoReport -Title "Job Complete" -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com"
 #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -432,4 +432,4 @@ function Send-RainbowCsv {
 
 #endregion
 
-Export-ModuleMember -Function Send-RainbowCsv
+Export-ModuleMember -Function CSVToRainbow

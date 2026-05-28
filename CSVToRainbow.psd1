@@ -7,7 +7,7 @@
     Description       = 'Sends CSV files as rainbow-colored, scrollable HTML tables in email. Column-colored headers, zebra rows, empty-cell highlighting, plain-text fallback, and optional attachments — powered by MailKit (auto-installed if missing).'
     PowerShellVersion = '5.1'
     RootModule        = 'CSVToRainbow.psm1'
-    FunctionsToExport = @('Send-RainbowCsv')
+    FunctionsToExport = @('CSVToRainbow')
     CmdletsToExport   = @()
     VariablesToExport = @()
     AliasesToExport   = @()
