@@ -1,9 +1,36 @@
+<#
+===============================================================================
+ CSVToRainbow.psm1
+===============================================================================
+ Module : CSVToRainbow
+ Purpose: Turn one or more CSV files into rainbow-colored, scrollable HTML
+          tables and email them — with a plain-text fallback for clients that
+          don't render HTML.
+
+ Public surface:
+   Send-RainbowCsv   Main entry point. See its comment-based help below.
+
+ Mail transport:
+   Uses MailKit/MimeKit (auto-installed from NuGet if not already present)
+   rather than the deprecated Send-MailMessage cmdlet.
+
+ Layout:
+   - Private Functions : helpers — assembly loading, SMTP send, HTML/text
+                         rendering, title cleanup. Not exported.
+   - Public Functions  : Send-RainbowCsv, the only exported command.
+===============================================================================
+#>
+
 #region Private Functions
 
+# Locate the MailKit and MimeKit DLLs on disk and load them into the session.
+# Searches the common per-user module/package folders first; if either DLL is
+# missing, installs both from NuGet and looks again. Throws if still not found.
 function Resolve-MailkitAssemblies {
     [CmdletBinding()]
     param()
 
+    # Per-user locations where the DLLs are likely to already exist
     $searchPaths = @(
         "$env:USERPROFILE\Documents\WindowsPowerShell\Modules",
         "$env:USERPROFILE\Documents\PowerShell\Modules",
@@ -13,6 +40,7 @@ function Resolve-MailkitAssemblies {
     $mailkitPath = $null
     $mimekitPath = $null
 
+    # Scan each search path for the two DLLs, stopping once each is found
     foreach ($path in $searchPaths) {
         if (Test-Path $path) {
             if (-not $mailkitPath) {
@@ -24,6 +52,7 @@ function Resolve-MailkitAssemblies {
         }
     }
 
+    # Either DLL missing? Install both from NuGet, then re-locate them
     if (-not $mailkitPath -or -not $mimekitPath) {
         Write-Verbose "MailKit/MimeKit not found. Installing from NuGet..."
         Register-PackageSource -Name MyNuGet -Location "https://www.nuget.org/api/v2" -ProviderName NuGet -ErrorAction SilentlyContinue
@@ -38,10 +67,13 @@ function Resolve-MailkitAssemblies {
         throw "Unable to locate MailKit/MimeKit DLLs even after installation."
     }
 
+    # Load MimeKit first — MailKit depends on it
     Add-Type -Path $mimekitPath.FullName
     Add-Type -Path $mailkitPath.FullName
 }
 
+# Build a MimeMessage from the supplied parts and send it over SMTP via MailKit.
+# Honors -WhatIf/-Confirm through ShouldProcess and always disposes the client.
 function Invoke-MailkitSend {
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -56,6 +88,7 @@ function Invoke-MailkitSend {
         [PSCredential]$Credential
     )
 
+    # Assemble the message: sender, recipients, and subject
     $message = [MimeKit.MimeMessage]::new()
     $message.From.Add([MimeKit.MailboxAddress]::Parse($From))
     foreach ($addr in $To) {
@@ -63,6 +96,7 @@ function Invoke-MailkitSend {
     }
     $message.Subject = $Subject
 
+    # Multipart body: plain-text + HTML alternatives, plus any file attachments
     $builder = [MimeKit.BodyBuilder]::new()
     $builder.TextBody = $PlainBody
     $builder.HtmlBody = $HtmlBody
@@ -75,6 +109,7 @@ function Invoke-MailkitSend {
 
     $message.Body = $builder.ToMessageBody()
 
+    # Accept any server certificate — convenient for internal/self-signed relays
     $smtp = [MailKit.Net.Smtp.SmtpClient]::new()
     $smtp.ServerCertificateValidationCallback = { $true }
 
@@ -99,6 +134,8 @@ function Invoke-MailkitSend {
     }
 }
 
+# Per-column colors, cycled in order across a table's columns (wraps if there
+# are more columns than entries). Pastel shades chosen for readable text.
 $script:RainbowPalette = @(
     '#FFB3B3',  # red
     '#FFDDB3',  # orange
@@ -109,12 +146,15 @@ $script:RainbowPalette = @(
     '#FFB3EC'   # pink
 )
 
+# Render one CSV's rows (already imported as objects) into an HTML fragment:
+# a titled, scrollable table with rainbow-colored columns and a row/column count.
 function Get-RainbowTableHtml {
     param(
         [object[]]$CsvData,
         [string]$SectionTitle
     )
 
+    # Column names come from the first object; every CSV row shares the same set
     $props     = $CsvData[0].PSObject.Properties.Name
     $rowCount  = @($CsvData).Count
     $colCount  = $props.Count
@@ -158,6 +198,8 @@ function Get-RainbowTableHtml {
 "@
 }
 
+# Produce a UTC-timestamped title. If no explicit Title is given, derive a
+# clean slug from the CSV filename (strip punctuation, collapse spaces/dashes).
 function Get-CleanTitle {
     param([string]$ReportPath, [string]$Title)
 
@@ -170,10 +212,13 @@ function Get-CleanTitle {
         $clean = $Title
     }
 
+    # Prefix with a sortable UTC stamp, e.g. 20260528-1430Z-my-report
     $ts = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmm") + "Z"
     return "$ts-$clean"
 }
 
+# Wrap the rendered table fragment(s) in a full HTML document with a header
+# showing the title and UTC timestamp. Used as the HTML body of the email.
 function Build-HtmlEmailBody {
     param(
         [string]$Title,
@@ -194,6 +239,8 @@ function Build-HtmlEmailBody {
 "@
 }
 
+# Build the plain-text fallback body: title, timestamp, and a one-line
+# row/column summary per CSV section. Shown by clients that can't render HTML.
 function Build-PlainEmailBody {
     param(
         [string]$Title,
@@ -302,17 +349,21 @@ function Send-RainbowCsv {
     )
 
     begin {
+        # Ensure mail assemblies are loaded once, then gather paths across the pipeline
         Resolve-MailkitAssemblies
         $collectedPaths = @()
         $dateNow        = Get-Date
     }
 
     process {
+        # Accumulate paths from each pipeline item; processing happens in end{}
         if ($ReportPath) { $collectedPaths += $ReportPath }
     }
 
     end {
         try {
+            # Decide the title: completion stamp when there's nothing to report,
+            # otherwise a clean title derived from the first CSV / -Title
             $finalTitle = if ($NoReport -or -not $collectedPaths) {
                 "$((Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmm"))Z-complete"
             }
@@ -330,7 +381,8 @@ function Send-RainbowCsv {
                 return
             }
 
-            # Process each CSV into a rainbow table
+            # Process each CSV into a rainbow table, collecting HTML fragments,
+            # plain-text summary data, and the files to attach
             $allHtml   = ''
             $sections  = [System.Collections.Generic.List[hashtable]]::new()
             $attachments = @()
@@ -341,9 +393,11 @@ function Send-RainbowCsv {
                 $csv = Import-Csv -Path $path
                 if (-not $csv -or @($csv).Count -eq 0) { throw "No data in file: $path" }
 
+                # One HTML section per file, titled with the file's base name
                 $sectionTitle = [System.IO.Path]::GetFileNameWithoutExtension($path)
                 $allHtml += Get-RainbowTableHtml -CsvData $csv -SectionTitle $sectionTitle
 
+                # Record counts for the plain-text fallback
                 $sections.Add(@{
                     Title    = $sectionTitle
                     RowCount = @($csv).Count
@@ -353,6 +407,7 @@ function Send-RainbowCsv {
                 if (-not $NoAttach) { $attachments += $path }
             }
 
+            # Compose both body formats and send the message
             $htmlBody  = Build-HtmlEmailBody -Title $finalTitle -Date $dateNow -HtmlContent $allHtml
             $plainBody = Build-PlainEmailBody -Title $finalTitle -Date $dateNow -Sections $sections -HasAttachments (-not $NoAttach)
 

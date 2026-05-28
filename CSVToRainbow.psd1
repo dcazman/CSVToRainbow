@@ -14,8 +14,8 @@
     PrivateData       = @{
         PSData = @{
             Tags         = @('CSV', 'Email', 'HTML', 'MailKit', 'Rainbow', 'Table', 'SMTP', 'Report')
-            ProjectUri   = ''
-            LicenseUri   = ''
+            ProjectUri   = 'https://github.com/dcazman/CSVToRainbow'
+            LicenseUri   = 'https://github.com/dcazman/CSVToRainbow/blob/main/LICENSE'
             ReleaseNotes = 'Initial release.'
         }
     }

@@ -32,7 +32,11 @@ Install-Module -Name CSVToRainbow -Scope CurrentUser
 Clone or download the repo and copy the `CSVToRainbow` folder to your PowerShell modules directory:
 
 ```
+# PowerShell 7+
 $env:USERPROFILE\Documents\PowerShell\Modules\CSVToRainbow\
+
+# Windows PowerShell 5.1
+$env:USERPROFILE\Documents\WindowsPowerShell\Modules\CSVToRainbow\
 ```
 
 ---
