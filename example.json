@@ -1,0 +1,5 @@
+{
+    "From":       "noreply@company.com",
+    "SmtpServer": "mail.company.com",
+    "SmtpPort":   25
+}

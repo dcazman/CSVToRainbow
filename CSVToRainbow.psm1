@@ -1,82 +1,385 @@
-<#
-.SYNOPSIS
-    Module: send CSV files as rainbow-colored, scrollable HTML tables in email.
+# =============================================================================
+# CSVToRainbow.psm1
+# =============================================================================
+# Sends CSV files as rainbow-colored, scrollable HTML tables in email.
+# Each column gets a distinct color. Empty cells are highlighted. Rows
+# alternate for readability. Plain-text fallback included for non-HTML clients.
+#
+# Works on Windows (PS 5.1+), macOS, and Linux (PS 7.0+).
+#
+# Exported commands:
+#   CSVToRainbow          Convert and send one or more CSV files.
+#   Set-RainbowCsvConfig  Save default From / SmtpServer / SmtpPort once.
+#
+# Config file (optional but recommended — run Set-RainbowCsvConfig to create):
+#   Stored alongside the module: env.json in the same folder as this file.
+#   Same path on all platforms — no setup required beyond a CurrentUser install.
+#
+# On every run, CSVToRainbow reads the config file automatically. If it is
+# missing or a required field is invalid, the user is prompted and offered
+# the option to save for next time.
+#
+# -----------------------------------------------------------------------------
+# Repo:     https://github.com/dcazman/CSVToRainbow
+# Author:   Dan Casmas
+# Version:  1.0.0
+# =============================================================================
 
-.DESCRIPTION
-    Converts one or more CSV files into styled HTML tables and emails them, with
-    a plain-text fallback for clients that don't render HTML. Mail is sent via
-    MailKit/MimeKit (auto-installed from NuGet if missing) rather than the
-    deprecated Send-MailMessage cmdlet.
+#region Module-level state
 
-    Exported command:
-      CSVToRainbow   Main entry point. See its comment-based help (Get-Help).
+# Config lives next to the module — works on all platforms with no path logic.
+$script:ConfigPath     = Join-Path $PSScriptRoot 'env.json'
+$script:EmailRegex     = '^[a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+$script:RainbowPalette = @(
+    '#FFB3B3',  # red
+    '#FFDDB3',  # orange
+    '#FFFAB3',  # yellow
+    '#B3FFB8',  # green
+    '#B3E5FF',  # blue
+    '#D4B3FF',  # purple
+    '#FFB3EC'   # pink
+)
 
-    File layout:
-      Private Functions - helpers: assembly loading, SMTP send, HTML/text
-                          rendering, title cleanup. Not exported.
-      Public Functions  - CSVToRainbow, the only exported command.
+#endregion
 
-.NOTES
-    Version:    1.0.0
-    Repo:       https://github.com/dcazman/CSVToRainbow
-    Requires:   PowerShell 5.1+. Internet access on first run (to install
-                MailKit/MimeKit from NuGet if not already present).
+#region Public Functions
 
-    *Created by Dan Casmas*
+function CSVToRainbow {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName', 'Path')]
+        [string[]]$ReportPath,
 
-.LINK
-    https://github.com/dcazman/CSVToRainbow
-#>
+        [string]$Title,
+
+        [Parameter(Mandatory)]
+        [string[]]$EmailTo,
+
+        [string]$From,
+
+        [string]$SmtpServer,
+
+        [Nullable[int]]$SmtpPort,
+
+        [Alias('noa')]
+        [switch]$NoAttach,
+
+        [PSCredential]$Credential
+    )
+
+    begin {
+        Resolve-MailkitAssemblies
+        $collectedPaths = [System.Collections.Generic.List[string]]::new()
+        $ts             = Get-LocalStamp
+
+        # Read config — prompts for any missing/invalid required fields,
+        # offers to save if the user had to type anything in.
+        $cfg = Read-RainbowConfig -FromParam $From -SmtpServerParam $SmtpServer
+
+        # Apply resolved values (param always wins over config)
+        if ([string]::IsNullOrWhiteSpace($From))       { $From       = $cfg.From }
+        if ([string]::IsNullOrWhiteSpace($SmtpServer)) { $SmtpServer = $cfg.SmtpServer }
+        if ($null -eq $SmtpPort)                       { $SmtpPort   = $cfg.SmtpPort }
+
+        # Validate recipients
+        foreach ($addr in $EmailTo) {
+            if ($addr -notmatch $script:EmailRegex) {
+                throw "Invalid -EmailTo address: '$addr'"
+            }
+        }
+
+        if ($SmtpPort -lt 1 -or $SmtpPort -gt 65535) {
+            throw "Invalid -SmtpPort: $SmtpPort. Must be between 1 and 65535."
+        }
+    }
+
+    process {
+        if ($null -ne $ReportPath) {
+            $collectedPaths.AddRange($ReportPath)
+        }
+    }
+
+    end {
+        try {
+            if ($collectedPaths.Count -eq 0) {
+                throw "No CSV files provided. Use -ReportPath to specify one or more CSV files."
+            }
+
+            $finalTitle = Get-CleanTitle -ReportPath $collectedPaths[0] -Title $Title -Stamp $ts.FileStamp
+
+            # Process each CSV into a rainbow table
+            $allHtml     = ''
+            $sections    = [System.Collections.Generic.List[hashtable]]::new()
+            $attachments = @()
+
+            foreach ($path in $collectedPaths) {
+                if (-not (Test-Path $path -PathType Leaf)) { throw "File not found: $path" }
+
+                $csv = Import-Csv -Path $path
+                if (-not $csv -or @($csv).Count -eq 0) { throw "No data in file: $path" }
+
+                $sectionTitle = [System.IO.Path]::GetFileNameWithoutExtension($path)
+                $allHtml     += Get-RainbowTableHtml -CsvData $csv -SectionTitle $sectionTitle
+
+                $sections.Add(@{
+                    Title    = $sectionTitle
+                    RowCount = @($csv).Count
+                    ColCount = $csv[0].PSObject.Properties.Name.Count
+                })
+
+                if (-not $NoAttach) { $attachments += $path }
+            }
+
+            $htmlBody  = Build-HtmlEmailBody -Title $finalTitle -Display $ts.Display -HtmlContent $allHtml
+            $plainBody = Build-PlainEmailBody -Title $finalTitle -Display $ts.Display -Sections $sections -HasAttachments (-not $NoAttach)
+
+            Invoke-MailkitSend -To $EmailTo -From $From -Subject $finalTitle `
+                -HtmlBody $htmlBody -PlainBody $plainBody `
+                -SmtpServer $SmtpServer -Port $SmtpPort `
+                -Attachments $attachments -Credential $Credential
+        }
+        catch {
+            Write-Error $_.Exception.Message
+            throw
+        }
+    }
+}
+
+function Set-RainbowCsvConfig {
+    # Saves From, SmtpServer, and SmtpPort to env.json next to the module so
+    # you don't have to pass them on every CSVToRainbow call. Validates before
+    # writing. Creates the config file if it does not exist.
+    #
+    # PARAMETERS:
+    #   -From        Sender email address (mandatory).
+    #   -SmtpServer  SMTP server hostname (mandatory).
+    #   -SmtpPort    SMTP port (default: 25).
+    #
+    # EXAMPLES:
+    #   Set-RainbowCsvConfig -From "noreply@company.com" -SmtpServer "mail.company.com"
+    #   Set-RainbowCsvConfig -From "noreply@company.com" -SmtpServer "mail.company.com" -SmtpPort 587
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [string]$From,
+
+        [Parameter(Mandatory)]
+        [string]$SmtpServer,
+
+        [ValidateRange(1, 65535)]
+        [int]$SmtpPort = 25
+    )
+
+    if ($From -notmatch $script:EmailRegex) {
+        throw "Invalid -From address: '$From'"
+    }
+    if ([string]::IsNullOrWhiteSpace($SmtpServer)) {
+        throw "-SmtpServer cannot be empty."
+    }
+
+    $config = @{ From = $From.Trim(); SmtpServer = $SmtpServer.Trim(); SmtpPort = $SmtpPort }
+
+    if ($PSCmdlet.ShouldProcess($script:ConfigPath, "Write config")) {
+        $config | ConvertTo-Json | Set-Content -Path $script:ConfigPath -Encoding UTF8
+        Write-Host "Saved to: $($script:ConfigPath)"
+        Write-Host "  From:       $From"
+        Write-Host "  SmtpServer: $SmtpServer"
+        Write-Host "  SmtpPort:   $SmtpPort"
+        Write-Verbose "Config written to $($script:ConfigPath)"
+    }
+}
+
+#endregion
 
 #region Private Functions
 
-# Locate the MailKit and MimeKit DLLs on disk and load them into the session.
-# Searches the common per-user module/package folders first; if either DLL is
-# missing, installs both from NuGet and looks again. Throws if still not found.
+# Resolves and loads local MimeKit and MailKit DLLs.
+# Looks in $PSScriptRoot\bin\net48 (Windows PS) or $PSScriptRoot\bin\net6.0 (PS Core).
+# If DLLs are missing, bootstraps by downloading latest versions directly from NuGet.
 function Resolve-MailkitAssemblies {
     [CmdletBinding()]
     param()
 
-    # Per-user locations where the DLLs are likely to already exist
-    $searchPaths = @(
-        "$env:USERPROFILE\Documents\WindowsPowerShell\Modules",
-        "$env:USERPROFILE\Documents\PowerShell\Modules",
-        "$env:USERPROFILE\AppData\Local\PackageManagement\NuGet\Packages"
+    $subFolder  = if ($PSEdition -eq 'Core') { 'net6.0' } else { 'net48' }
+    $binPath    = Join-Path $PSScriptRoot "bin\$subFolder"
+    $mimekitDll = Join-Path $binPath 'MimeKit.dll'
+    $mailkitDll = Join-Path $binPath 'MailKit.dll'
+
+    if (-not (Test-Path $mimekitDll) -or -not (Test-Path $mailkitDll)) {
+        Write-Warning "CSVToRainbow: Required dependencies missing. Bootstrapping from NuGet..."
+
+        $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) "CSVToRainbow_Bootstrap_$(Get-Random)"
+        New-Item -ItemType Directory -Path $tempPath -Force | Out-Null
+        New-Item -ItemType Directory -Path $binPath  -Force | Out-Null
+
+        try {
+            foreach ($pkg in @('MimeKit', 'MailKit')) {
+                $url     = "https://www.nuget.org/api/v2/package/$pkg"
+                $zipFile = Join-Path $tempPath "$pkg.zip"
+
+                Write-Verbose "Downloading $pkg (latest)..."
+                Invoke-WebRequest -Uri $url -OutFile $zipFile -UseBasicParsing -ErrorAction Stop
+
+                $extractPath = Join-Path $tempPath $pkg
+                Expand-Archive -Path $zipFile -DestinationPath $extractPath -Force
+
+                if ($subFolder -eq 'net48') {
+                    $src = Join-Path $extractPath "lib\net48\$pkg.dll"
+                    if (Test-Path $src) { Copy-Item $src -Destination $binPath -Force }
+                }
+                else {
+                    $src = Get-ChildItem -Path $extractPath -Recurse -Filter "$pkg.dll" |
+                           Where-Object { $_.DirectoryName -match 'net6\.0|netstandard2\.1' } |
+                           Select-Object -First 1
+                    if ($src) { Copy-Item $src.FullName -Destination $binPath -Force }
+                }
+            }
+            Write-Verbose "Dependencies staged to: $binPath"
+        }
+        catch {
+            throw "Failed to bootstrap MailKit/MimeKit: $($_.Exception.Message)"
+        }
+        finally {
+            if (Test-Path $tempPath) { Remove-Item $tempPath -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    if (-not (Test-Path $mimekitDll) -or -not (Test-Path $mailkitDll)) {
+        throw "Required dependencies could not be resolved or downloaded into: '$binPath'."
+    }
+
+    # Load MimeKit first — MailKit depends on it
+    Add-Type -Path $mimekitDll
+    Add-Type -Path $mailkitDll
+}
+
+# Returns a hashtable with two timestamp strings using the system's local timezone.
+# Falls back to UTC if the conversion fails.
+#   FileStamp — file/title-safe:  2026-05-29_02-06PM
+#   Display   — human-readable:   2026-05-29 2:06 PM (Eastern Standard Time)
+function Get-LocalStamp {
+    try {
+        $tz  = [System.TimeZoneInfo]::Local
+        $now = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tz)
+        @{
+            FileStamp = $now.ToString('yyyy-MM-dd_hh-mmtt')
+            Display   = "$($now.ToString('yyyy-MM-dd h:mm tt')) ($($tz.DisplayName))"
+        }
+    }
+    catch {
+        $now = [DateTime]::UtcNow
+        @{
+            FileStamp = $now.ToString('yyyy-MM-dd_HH-mm') + 'Z'
+            Display   = "$($now.ToString('yyyy-MM-dd HH:mm')) UTC"
+        }
+    }
+}
+
+# Called automatically at the start of every CSVToRainbow run.
+#
+# Resolution order:
+#   1. If From or SmtpServer were passed directly as params, skip prompting for those.
+#   2. Read env.json — if missing, warn and prompt for any values not already supplied.
+#   3. Validate each field from the file — warn and prompt for anything bad.
+#   4. SmtpPort: if missing or invalid, silently default to 25 (no prompt).
+#   5. If the user was prompted for anything, offer to save to env.json for next time.
+function Read-RainbowConfig {
+    param(
+        [string]$FromParam,
+        [string]$SmtpServerParam
     )
 
-    $mailkitPath = $null
-    $mimekitPath = $null
+    $result   = @{ From = $null; SmtpServer = $null; SmtpPort = 25 }
+    $prompted = $false
 
-    # Scan each search path for the two DLLs, stopping once each is found
-    foreach ($path in $searchPaths) {
-        if (Test-Path $path) {
-            if (-not $mailkitPath) {
-                $mailkitPath = Get-ChildItem -Path $path -Recurse -Filter "MailKit.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $needFrom       = [string]::IsNullOrWhiteSpace($FromParam)
+    $needSmtpServer = [string]::IsNullOrWhiteSpace($SmtpServerParam)
+
+    if (-not (Test-Path $script:ConfigPath)) {
+        Write-Warning "CSVToRainbow: No config file found at $($script:ConfigPath)."
+        Write-Warning "CSVToRainbow: Run Set-RainbowCsvConfig to create one, or enter values below."
+    }
+    else {
+        try {
+            $raw = Get-Content -Path $script:ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            Write-Warning "CSVToRainbow: env.json could not be parsed — $($_.Exception.Message)"
+            $raw = $null
+        }
+
+        if ($raw) {
+            # Warn on unknown keys
+            $known = @('From', 'SmtpServer', 'SmtpPort')
+            $raw.PSObject.Properties.Name | Where-Object { $_ -notin $known } | ForEach-Object {
+                Write-Warning "CSVToRainbow: Unknown key '$_' in env.json — ignored."
             }
-            if (-not $mimekitPath) {
-                $mimekitPath = Get-ChildItem -Path $path -Recurse -Filter "MimeKit.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+            if ($needFrom) {
+                if ($raw.PSObject.Properties['From'] -and $raw.From -match $script:EmailRegex) {
+                    $result.From = $raw.From.Trim()
+                }
+                elseif ($raw.PSObject.Properties['From']) {
+                    Write-Warning "CSVToRainbow: 'From' in env.json ('$($raw.From)') is not a valid email address."
+                }
+            }
+
+            if ($needSmtpServer) {
+                if ($raw.PSObject.Properties['SmtpServer'] -and -not [string]::IsNullOrWhiteSpace($raw.SmtpServer)) {
+                    $result.SmtpServer = $raw.SmtpServer.Trim()
+                }
+                elseif ($raw.PSObject.Properties['SmtpServer']) {
+                    Write-Warning "CSVToRainbow: 'SmtpServer' in env.json is empty."
+                }
+            }
+
+            # SmtpPort — silent fallback to 25 if bad
+            if ($raw.PSObject.Properties['SmtpPort']) {
+                $port = $raw.SmtpPort -as [int]
+                if ($port -ge 1 -and $port -le 65535) {
+                    $result.SmtpPort = $port
+                }
+                else {
+                    Write-Warning "CSVToRainbow: 'SmtpPort' in env.json ('$($raw.SmtpPort)') is invalid — defaulting to 25."
+                }
             }
         }
     }
 
-    # Either DLL missing? Install both from NuGet, then re-locate them
-    if (-not $mailkitPath -or -not $mimekitPath) {
-        Write-Verbose "MailKit/MimeKit not found. Installing from NuGet..."
-        Register-PackageSource -Name MyNuGet -Location "https://www.nuget.org/api/v2" -ProviderName NuGet -ErrorAction SilentlyContinue
-        Install-Package MimeKit -SkipDependencies -Source "MyNuGet" -Scope CurrentUser -Force -ErrorAction Stop
-        Install-Package MailKit -SkipDependencies -Source "MyNuGet" -Scope CurrentUser -Force -ErrorAction Stop
+    # --- Prompt for anything still missing ---
 
-        $mailkitPath = Get-ChildItem -Path "$env:USERPROFILE\AppData\Local\PackageManagement\NuGet\Packages" -Recurse -Filter "MailKit.dll" -ErrorAction Stop | Select-Object -First 1
-        $mimekitPath = Get-ChildItem -Path "$env:USERPROFILE\AppData\Local\PackageManagement\NuGet\Packages" -Recurse -Filter "MimeKit.dll" -ErrorAction Stop | Select-Object -First 1
+    if ($needFrom -and -not $result.From) {
+        do {
+            $result.From = (Read-Host "  From (sender email)").Trim()
+            if ($result.From -notmatch $script:EmailRegex) {
+                Write-Warning "  Not a valid email address. Try again."
+                $result.From = $null
+            }
+        } while (-not $result.From)
+        $prompted = $true
     }
 
-    if (-not $mailkitPath -or -not $mimekitPath) {
-        throw "Unable to locate MailKit/MimeKit DLLs even after installation."
+    if ($needSmtpServer -and -not $result.SmtpServer) {
+        do {
+            $result.SmtpServer = (Read-Host "  SMTP server hostname").Trim()
+            if ([string]::IsNullOrWhiteSpace($result.SmtpServer)) {
+                Write-Warning "  SMTP server cannot be empty. Try again."
+                $result.SmtpServer = $null
+            }
+        } while (-not $result.SmtpServer)
+        $prompted = $true
     }
 
-    # Load MimeKit first — MailKit depends on it
-    Add-Type -Path $mimekitPath.FullName
-    Add-Type -Path $mailkitPath.FullName
+    # --- Offer to save if the user typed anything in ---
+    if ($prompted) {
+        $save = (Read-Host "  Save these settings for next time? (Y/N)").Trim()
+        if ($save -match '^[Yy]') {
+            Set-RainbowCsvConfig -From $result.From -SmtpServer $result.SmtpServer -SmtpPort $result.SmtpPort
+        }
+    }
+
+    return $result
 }
 
 # Build a MimeMessage from the supplied parts and send it over SMTP via MailKit.
@@ -95,7 +398,6 @@ function Invoke-MailkitSend {
         [PSCredential]$Credential
     )
 
-    # Assemble the message: sender, recipients, and subject
     $message = [MimeKit.MimeMessage]::new()
     $message.From.Add([MimeKit.MailboxAddress]::Parse($From))
     foreach ($addr in $To) {
@@ -107,13 +409,9 @@ function Invoke-MailkitSend {
     $builder = [MimeKit.BodyBuilder]::new()
     $builder.TextBody = $PlainBody
     $builder.HtmlBody = $HtmlBody
-
     foreach ($file in $Attachments) {
-        if (Test-Path $file -PathType Leaf) {
-            [void]$builder.Attachments.Add($file)
-        }
+        if (Test-Path $file -PathType Leaf) { [void]$builder.Attachments.Add($file) }
     }
-
     $message.Body = $builder.ToMessageBody()
 
     # Accept any server certificate — convenient for internal/self-signed relays
@@ -141,41 +439,28 @@ function Invoke-MailkitSend {
     }
 }
 
-# Per-column colors, cycled in order across a table's columns (wraps if there
-# are more columns than entries). Pastel shades chosen for readable text.
-$script:RainbowPalette = @(
-    '#FFB3B3',  # red
-    '#FFDDB3',  # orange
-    '#FFFAB3',  # yellow
-    '#B3FFB8',  # green
-    '#B3E5FF',  # blue
-    '#D4B3FF',  # purple
-    '#FFB3EC'   # pink
-)
-
-# Render one CSV's rows (already imported as objects) into an HTML fragment:
-# a titled, scrollable table with rainbow-colored columns and a row/column count.
+# Render one CSV into an HTML fragment: titled scrollable table with
+# rainbow-colored columns, zebra rows, sticky header, and row/col summary.
+# Cell and header values are HTML-encoded to handle special characters safely.
 function Get-RainbowTableHtml {
     param(
         [object[]]$CsvData,
         [string]$SectionTitle
     )
 
-    # Column names come from the first object; every CSV row shares the same set
-    $props     = $CsvData[0].PSObject.Properties.Name
-    $rowCount  = @($CsvData).Count
-    $colCount  = $props.Count
-    $summary   = "$rowCount row(s) &bull; $colCount column(s)"
+    $props    = $CsvData[0].PSObject.Properties.Name
+    $rowCount = @($CsvData).Count
+    $colCount = $props.Count
+    $summary  = "$rowCount row(s) &bull; $colCount column(s)"
 
-    # Header row — each column gets its rainbow color, sticky on scroll
     $headerCells = for ($i = 0; $i -lt $props.Count; $i++) {
-        $color = $script:RainbowPalette[$i % $script:RainbowPalette.Count]
+        $color         = $script:RainbowPalette[$i % $script:RainbowPalette.Count]
+        $escapedHeader = [System.Net.WebUtility]::HtmlEncode($props[$i])
         "<th style='background-color:$color; border:1px solid #aaa; padding:8px 10px; " +
         "text-align:left; position:sticky; top:0; white-space:nowrap; font-family:Arial; font-size:13px;'>" +
-        "$($props[$i])</th>"
+        "$escapedHeader</th>"
     }
 
-    # Data rows — zebra stripe + colored left border per column; grey out empty cells
     $rows = for ($r = 0; $r -lt $CsvData.Count; $r++) {
         $rowBg = if ($r % 2 -eq 0) { '#ffffff' } else { '#f5f5f5' }
         $cells = for ($i = 0; $i -lt $props.Count; $i++) {
@@ -186,8 +471,9 @@ function Get-RainbowTableHtml {
                 "padding:6px 8px; color:#aaa; font-style:italic; font-family:Arial; font-size:13px;'>&#8212;</td>"
             }
             else {
+                $escapedVal = [System.Net.WebUtility]::HtmlEncode($val)
                 "<td style='background-color:$rowBg; border:1px solid #ddd; border-left:3px solid $color; " +
-                "padding:6px 8px; font-family:Arial; font-size:13px;'>$val</td>"
+                "padding:6px 8px; font-family:Arial; font-size:13px;'>$escapedVal</td>"
             }
         }
         "<tr>$($cells -join '')</tr>"
@@ -205,10 +491,9 @@ function Get-RainbowTableHtml {
 "@
 }
 
-# Produce a UTC-timestamped title. If no explicit Title is given, derive a
-# clean slug from the CSV filename (strip punctuation, collapse spaces/dashes).
+# Produce a local-timestamped title slug from the CSV filename or the -Title param.
 function Get-CleanTitle {
-    param([string]$ReportPath, [string]$Title)
+    param([string]$ReportPath, [string]$Title, [string]$Stamp)
 
     if ([string]::IsNullOrWhiteSpace($Title)) {
         $base  = [System.IO.Path]::GetFileNameWithoutExtension($ReportPath)
@@ -219,17 +504,14 @@ function Get-CleanTitle {
         $clean = $Title
     }
 
-    # Prefix with a sortable UTC stamp, e.g. 20260528-1430Z-my-report
-    $ts = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmm") + "Z"
-    return "$ts-$clean"
+    return "$Stamp-$clean"
 }
 
-# Wrap the rendered table fragment(s) in a full HTML document with a header
-# showing the title and UTC timestamp. Used as the HTML body of the email.
+# Wrap table HTML fragment(s) in a full HTML document with title and local timestamp.
 function Build-HtmlEmailBody {
     param(
         [string]$Title,
-        [datetime]$Date,
+        [string]$Display,
         [string]$HtmlContent = ''
     )
 
@@ -238,7 +520,7 @@ function Build-HtmlEmailBody {
 <html>
 <head><meta charset='utf-8'></head>
 <body style='font-family:Arial; margin:20px; background:#fff;'>
-  <div style='font-size:12px; color:#999; margin-bottom:6px;'>$($Date.ToUniversalTime().ToString("yyyy-MM-dd HH:mm")) UTC</div>
+  <div style='font-size:12px; color:#999; margin-bottom:6px;'>$Display</div>
   <h1 style='font-size:18px; text-align:center; margin-bottom:24px; color:#222;'>$Title</h1>
   $HtmlContent
 </body>
@@ -246,19 +528,18 @@ function Build-HtmlEmailBody {
 "@
 }
 
-# Build the plain-text fallback body: title, timestamp, and a one-line
-# row/column summary per CSV section. Shown by clients that can't render HTML.
+# Build the plain-text fallback body with a one-line summary per CSV section.
 function Build-PlainEmailBody {
     param(
         [string]$Title,
-        [datetime]$Date,
+        [string]$Display,
         [System.Collections.Generic.List[hashtable]]$Sections,
         [bool]$HasAttachments
     )
 
     $lines = @(
         $Title,
-        "$($Date.ToUniversalTime().ToString("yyyy-MM-dd HH:mm")) UTC",
+        $Display,
         ""
     )
 
@@ -276,160 +557,4 @@ function Build-PlainEmailBody {
 
 #endregion
 
-#region Public Functions
-
-function CSVToRainbow {
-<#
-.SYNOPSIS
-    Sends CSV files as rainbow-colored, scrollable HTML tables in an email.
-
-.DESCRIPTION
-    Converts one or more CSV files into styled HTML tables and emails them.
-    Each column gets a distinct color. Empty cells are highlighted. Rows alternate
-    for readability. A plain-text fallback is included for non-HTML clients.
-    Uses MailKit (auto-installed if missing) instead of the deprecated Send-MailMessage.
-
-.PARAMETER ReportPath
-    One or more CSV file paths. Accepts pipeline input by value or property name
-    (FullName, Path) — compatible with Get-ChildItem output.
-
-.PARAMETER Title
-    Optional subject line and heading. Auto-generated from filename + UTC timestamp if omitted.
-
-.PARAMETER EmailTo
-    One or more recipient email addresses. Mandatory.
-
-.PARAMETER From
-    Sender email address. Mandatory.
-
-.PARAMETER SmtpServer
-    SMTP server hostname. Mandatory.
-
-.PARAMETER SmtpPort
-    SMTP port. Default: 25.
-
-.PARAMETER NoReport
-    Skip CSV processing and send a plain completion notification instead.
-
-.PARAMETER NoAttach
-    Send inline HTML only; do not attach the CSV files.
-
-.PARAMETER Credential
-    Optional PSCredential for SMTP authentication.
-
-.EXAMPLE
-    CSVToRainbow -ReportPath "C:\Logs\export.csv" -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com"
-
-.EXAMPLE
-    Get-ChildItem C:\Logs\*.csv | CSVToRainbow -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com" -NoAttach
-
-.EXAMPLE
-    CSVToRainbow -NoReport -Title "Job Complete" -EmailTo "ops@company.com" -From "noreply@company.com" -SmtpServer "mail.company.com"
-#>
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
-        [Alias('FullName', 'Path')]
-        [string[]]$ReportPath,
-
-        [string]$Title,
-
-        [Parameter(Mandatory)]
-        [ValidatePattern("^[a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")]
-        [string[]]$EmailTo,
-
-        [Parameter(Mandatory)]
-        [ValidatePattern("^[a-zA-Z0-9][a-zA-Z0-9._%+-]*@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")]
-        [string]$From,
-
-        [Parameter(Mandatory)]
-        [string]$SmtpServer,
-
-        [int]$SmtpPort = 25,
-
-        [switch]$NoReport,
-
-        [Alias('noa')]
-        [switch]$NoAttach,
-
-        [PSCredential]$Credential
-    )
-
-    begin {
-        # Ensure mail assemblies are loaded once, then gather paths across the pipeline
-        Resolve-MailkitAssemblies
-        $collectedPaths = @()
-        $dateNow        = Get-Date
-    }
-
-    process {
-        # Accumulate paths from each pipeline item; processing happens in end{}
-        if ($ReportPath) { $collectedPaths += $ReportPath }
-    }
-
-    end {
-        try {
-            # Decide the title: completion stamp when there's nothing to report,
-            # otherwise a clean title derived from the first CSV / -Title
-            $finalTitle = if ($NoReport -or -not $collectedPaths) {
-                "$((Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmm"))Z-complete"
-            }
-            else {
-                Get-CleanTitle -ReportPath $collectedPaths[0] -Title $Title
-            }
-
-            # NoReport or no input paths: plain completion ping
-            if ($NoReport -or -not $collectedPaths) {
-                $html  = Build-HtmlEmailBody -Title $finalTitle -Date $dateNow
-                $plain = "$finalTitle`n$($dateNow.ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC"
-                Invoke-MailkitSend -To $EmailTo -From $From -Subject $finalTitle `
-                    -HtmlBody $html -PlainBody $plain `
-                    -SmtpServer $SmtpServer -Port $SmtpPort -Credential $Credential
-                return
-            }
-
-            # Process each CSV into a rainbow table, collecting HTML fragments,
-            # plain-text summary data, and the files to attach
-            $allHtml   = ''
-            $sections  = [System.Collections.Generic.List[hashtable]]::new()
-            $attachments = @()
-
-            foreach ($path in $collectedPaths) {
-                if (-not (Test-Path $path -PathType Leaf)) { throw "File not found: $path" }
-
-                $csv = Import-Csv -Path $path
-                if (-not $csv -or @($csv).Count -eq 0) { throw "No data in file: $path" }
-
-                # One HTML section per file, titled with the file's base name
-                $sectionTitle = [System.IO.Path]::GetFileNameWithoutExtension($path)
-                $allHtml += Get-RainbowTableHtml -CsvData $csv -SectionTitle $sectionTitle
-
-                # Record counts for the plain-text fallback
-                $sections.Add(@{
-                    Title    = $sectionTitle
-                    RowCount = @($csv).Count
-                    ColCount = $csv[0].PSObject.Properties.Name.Count
-                })
-
-                if (-not $NoAttach) { $attachments += $path }
-            }
-
-            # Compose both body formats and send the message
-            $htmlBody  = Build-HtmlEmailBody -Title $finalTitle -Date $dateNow -HtmlContent $allHtml
-            $plainBody = Build-PlainEmailBody -Title $finalTitle -Date $dateNow -Sections $sections -HasAttachments (-not $NoAttach)
-
-            Invoke-MailkitSend -To $EmailTo -From $From -Subject $finalTitle `
-                -HtmlBody $htmlBody -PlainBody $plainBody `
-                -SmtpServer $SmtpServer -Port $SmtpPort `
-                -Attachments $attachments -Credential $Credential
-        }
-        catch {
-            Write-Error $_.Exception.Message
-            throw
-        }
-    }
-}
-
-#endregion
-
-Export-ModuleMember -Function CSVToRainbow
+Export-ModuleMember -Function CSVToRainbow, Set-RainbowCsvConfig
