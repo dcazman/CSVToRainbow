@@ -6,20 +6,9 @@
 #   Invoke-Pester ./Tests/CSVToRainbow.Tests.ps1 -Output Detailed
 # =============================================================================
 
-BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'CSVToRainbow.psm1'
-
-    # Stub out Resolve-MailkitAssemblies before the module loads so CI doesn't
-    # need MailKit DLLs or NuGet access just to test the utility functions.
-    function global:Resolve-MailkitAssemblies { }
-
-    Import-Module $modulePath -Force
-}
-
-AfterAll {
-    Remove-Item Function:\Resolve-MailkitAssemblies -ErrorAction SilentlyContinue
-    Remove-Module CSVToRainbow -ErrorAction SilentlyContinue
-}
+# Import at script scope so InModuleScope can resolve it during discovery
+$modulePath = Join-Path $PSScriptRoot '..' 'CSVToRainbow.psm1'
+Import-Module $modulePath -Force
 
 Describe 'Get-LocalStamp' {
 
@@ -130,24 +119,24 @@ Describe 'Get-RainbowTableHtml' {
     InModuleScope CSVToRainbow {
 
         BeforeAll {
-            $csv = @(
+            $script:csv = @(
                 [PSCustomObject]@{ Name = 'Alice'; Age = '30'; City = 'NY' }
                 [PSCustomObject]@{ Name = 'Bob';   Age = '';   City = 'LA' }
             )
         }
 
         It 'Returns a non-empty string' {
-            $result = Get-RainbowTableHtml -CsvData $csv -SectionTitle 'People'
+            $result = Get-RainbowTableHtml -CsvData $script:csv -SectionTitle 'People'
             $result | Should -Not -BeNullOrEmpty
         }
 
         It 'Includes the section title' {
-            $result = Get-RainbowTableHtml -CsvData $csv -SectionTitle 'People'
+            $result = Get-RainbowTableHtml -CsvData $script:csv -SectionTitle 'People'
             $result | Should -Match 'People'
         }
 
         It 'Shows row and column count summary' {
-            $result = Get-RainbowTableHtml -CsvData $csv -SectionTitle 'People'
+            $result = Get-RainbowTableHtml -CsvData $script:csv -SectionTitle 'People'
             $result | Should -Match '2 row'
             $result | Should -Match '3 column'
         }
@@ -162,7 +151,7 @@ Describe 'Get-RainbowTableHtml' {
         }
 
         It 'Renders empty cells with the em-dash placeholder' {
-            $result = Get-RainbowTableHtml -CsvData $csv -SectionTitle 'People'
+            $result = Get-RainbowTableHtml -CsvData $script:csv -SectionTitle 'People'
             $result | Should -Match '&#8212;'
         }
     }
