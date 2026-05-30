@@ -1,5 +1,5 @@
 @{
-    ModuleVersion     = '1.0.1'
+    ModuleVersion     = '1.0.2'
     GUID              = '5afbbe01-81b0-4a5c-8219-2ffa8be74aff'
     Author            = 'Dan Casmas'
     CompanyName       = ''
