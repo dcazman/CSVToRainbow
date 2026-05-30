@@ -5,6 +5,10 @@ on:
     branches: ['**']
   pull_request:
     branches: ['**']
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
@@ -22,10 +26,16 @@ jobs:
           $config = New-PesterConfiguration
           $config.Run.Path = './Tests'
           $config.Output.Verbosity = 'Detailed'
+          $config.Run.Exit = $true
           $config.TestResult.Enabled = $true
           $config.TestResult.OutputPath = 'test-results.xml'
           $config.TestResult.OutputFormat = 'JUnitXml'
-          Invoke-Pester -Configuration $config
+          try {
+            Invoke-Pester -Configuration $config
+          } catch {
+            Write-Error "Pester failed: $_"
+            exit 1
+          }
 
       - name: Publish test results
         uses: actions/upload-artifact@v4
