@@ -1,3 +1,5 @@
+[![PSGallery Version](https://img.shields.io/powershellgallery/v/CSVToRainbow)](https://www.powershellgallery.com/packages/CSVToRainbow)
+[![PSGallery Downloads](https://img.shields.io/powershellgallery/dt/CSVToRainbow)](https://www.powershellgallery.com/packages/CSVToRainbow)
 # CSVToRainbow
 
 Send CSV files as beautiful, rainbow-colored HTML tables directly in email — no Excel required.
