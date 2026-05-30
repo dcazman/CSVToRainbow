@@ -8,7 +8,17 @@
 
 BeforeAll {
     $modulePath = Join-Path $PSScriptRoot '..' 'CSVToRainbow.psm1'
+
+    # Stub out Resolve-MailkitAssemblies before the module loads so CI doesn't
+    # need MailKit DLLs or NuGet access just to test the utility functions.
+    function global:Resolve-MailkitAssemblies { }
+
     Import-Module $modulePath -Force
+}
+
+AfterAll {
+    Remove-Item Function:\Resolve-MailkitAssemblies -ErrorAction SilentlyContinue
+    Remove-Module CSVToRainbow -ErrorAction SilentlyContinue
 }
 
 Describe 'Get-LocalStamp' {
