@@ -168,7 +168,6 @@ Get-ChildItem C:\Logs\*.csv | CSVToRainbow -EmailTo "ops@company.com" -NoAttach
 Internet access is required on first use to bootstrap MailKit/MimeKit from NuGet. After that, the DLLs are cached in the module folder and no internet access is needed.
 
 ---
-
 ## License
 
-GNU General Public License v3.0 — see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.
