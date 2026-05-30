@@ -21,7 +21,7 @@
     )
     PrivateData       = @{
         PSData = @{
-            Tags         = @('CSV', 'Email', 'HTML', 'MailKit', 'Rainbow', 'Table', 'SMTP', 'Report', 'CrossPlatform', 'PowerShell', 'Pester')
+            Tags         = @('CSV', 'Email', 'HTML', 'MailKit', 'Rainbow', 'Table', 'SMTP', 'Report', 'CrossPlatform', 'PowerShell')
             ProjectUri   = 'https://github.com/dcazman/CSVToRainbow'
             LicenseUri   = 'https://github.com/dcazman/CSVToRainbow/blob/main/LICENSE'
             ReleaseNotes = @'
@@ -30,8 +30,6 @@
 - net6.0 DLL now preferred over netstandard2.1 during NuGet bootstrap
 - Corrected SECURITY.md: cell values are HTML-encoded via HtmlEncode
 - Updated license to MIT throughout
-- Added Pester v5 test suite (Tests/CSVToRainbow.Tests.ps1)
-- Added CI workflow (.github/workflows/ci.yml) — tests run on every push and PR
 '@
         }
     }
